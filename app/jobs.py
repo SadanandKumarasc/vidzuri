@@ -15,10 +15,11 @@ logger = logging.getLogger("jobs")
 _executor = ThreadPoolExecutor(max_workers=2)
 _jobs: dict[str, dict] = {}
 
-# A proxied download occasionally arrives corrupted (e.g. a rotating
-# residential proxy switching IP mid-download). Each retry re-downloads
-# from scratch, which usually gets a clean connection.
-MAX_CLIP_ATTEMPTS = 3
+# Each retry re-downloads from scratch with a different strategy (see
+# _download_and_render): range-limited vs. full download, proxied vs.
+# direct. Different videos have needed different combinations to get a
+# clean, decodable download, so all four get a shot before giving up.
+MAX_CLIP_ATTEMPTS = 4
 
 
 def create_job(payload: dict) -> str:
@@ -84,21 +85,21 @@ def _download_and_render(
     last_exc: Optional[Exception] = None
     for attempt in range(1, MAX_CLIP_ATTEMPTS + 1):
         suffix = f" (retry {attempt - 1}/{MAX_CLIP_ATTEMPTS - 1})" if attempt > 1 else ""
-        # force_keyframes_at_cuts gives a frame-exact cut but makes yt-dlp
-        # re-encode the fragment locally, which has been observed to yield
-        # an undecodable video track for some downloads even though the
-        # file looks structurally valid.
+        # Attempts 1-2: yt-dlp's byte-range section download, which is fast
+        # (fetches only the needed window) but has been traced as the
+        # actual source of an undecodable-track failure for certain videos
+        # -- confirmed by it persisting identically with and without a
+        # proxy. force_keyframes_at_cuts gives a frame-exact cut via a local
+        # re-encode; attempt 2 drops it in case that step is implicated too.
+        # Attempts 3-4: sidestep range-downloading entirely -- fetch the
+        # whole video and trim locally in finalize_clip. That's a bigger
+        # transfer than a 15s range fetch: the proxy tunnel has timed out on
+        # it (502) for some videos, while going direct has hit YouTube's
+        # bot-check wall for others (cookies alone don't always clear it on
+        # a datacenter IP) -- so attempt 3 tries proxied, attempt 4 direct.
+        use_ranges = attempt <= 2
         force_keyframes = attempt == 1
-        # yt-dlp's byte-range section download (download_ranges) has been
-        # traced as the actual source of that undecodable-track failure for
-        # certain videos -- confirmed by it persisting identically with and
-        # without a proxy in the loop. The last attempt sidesteps the
-        # mechanism entirely: download the whole video and trim locally.
-        # That's a much bigger transfer than a 15s range fetch, and the
-        # proxy tunnel has been observed timing out on it (502 Bad Gateway)
-        # -- cookies now provide real auth, so skip the proxy for it too.
-        use_ranges = attempt < MAX_CLIP_ATTEMPTS
-        use_proxy = use_ranges
+        use_proxy = attempt != MAX_CLIP_ATTEMPTS
         try:
             _set(job_id, message=f"Downloading clip {i}/{total}{suffix}")
             src = youtube.download_section(
