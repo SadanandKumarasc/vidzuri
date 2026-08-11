@@ -40,15 +40,28 @@ YOUTUBE_URL_RE = re.compile(
 )
 
 # Cloud-host IPs occasionally hit YouTube's "Sign in to confirm you're not a
-# bot" wall -- and it's intermittent per-request, not just per-video. Each
-# player client hits a different backend endpoint with different bot-check
-# enforcement, so cycling through a few on that specific error is the
-# standard mitigation (short of using login cookies or a residential proxy).
-_CLIENT_FALLBACKS = [
-    ["android", "web"],
-    ["ios", "web"],
-    ["tv_embedded", "web"],
-]
+# bot" wall, and each player client hits a different backend endpoint with
+# different bot-check enforcement -- cycling through a few is the standard
+# mitigation. With YTDLP_COOKIES_FILE set, "web" (the real browser client)
+# goes first: android/ios/tv_embedded are simplified API clients that
+# YouTube has been progressively restricting to a smaller, lower-quality
+# format list (since scrapers overwhelmingly use them), which is what kept
+# landing us on the throttled legacy 360p stream even after cookie auth.
+# "web" needs a real session to avoid its own, stricter bot-check --
+# without cookies it's kept last so the mobile clients get first shot.
+_CLIENT_FALLBACKS = (
+    [
+        ["web", "android"],
+        ["ios", "web"],
+        ["tv_embedded", "web"],
+    ]
+    if YTDLP_COOKIES_FILE
+    else [
+        ["android", "web"],
+        ["ios", "web"],
+        ["tv_embedded", "web"],
+    ]
+)
 
 _BOT_CHECK_MARKERS = ("sign in to confirm", "not a bot")
 
