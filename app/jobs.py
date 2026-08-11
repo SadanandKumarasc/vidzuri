@@ -1,5 +1,6 @@
 """In-memory job store + background orchestration for both clip modes."""
 
+import logging
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -9,8 +10,15 @@ from typing import Optional
 from app import clipper, highlights, transcribe, youtube
 from app.config import MAX_CLIP_SECONDS, MIN_CLIP_SECONDS, WORK_DIR
 
+logger = logging.getLogger("jobs")
+
 _executor = ThreadPoolExecutor(max_workers=2)
 _jobs: dict[str, dict] = {}
+
+# A proxied download occasionally arrives corrupted (e.g. a rotating
+# residential proxy switching IP mid-download). Each retry re-downloads
+# from scratch, which usually gets a clean connection.
+MAX_CLIP_ATTEMPTS = 3
 
 
 def create_job(payload: dict) -> str:
@@ -52,10 +60,7 @@ def _run_job(job_id: str, payload: dict) -> None:
 
         clips = []
         for i, w in enumerate(windows, start=1):
-            _set(job_id, message=f"Downloading clip {i}/{len(windows)}")
-            src = youtube.download_section(url, w["start"], w["end"], job_work_dir)
-            _set(job_id, message=f"Rendering clip {i}/{len(windows)}")
-            out_path = clipper.finalize_clip(src, job_id, i, vertical)
+            out_path = _download_and_render(job_id, url, w, i, len(windows), vertical, job_work_dir)
             clips.append(
                 {
                     "title": w.get("title", info["title"]),
@@ -71,6 +76,23 @@ def _run_job(job_id: str, payload: dict) -> None:
         _set(job_id, status="error", message=str(exc), error=str(exc))
     finally:
         _cleanup_dir(job_work_dir)
+
+
+def _download_and_render(
+    job_id: str, url: str, w: dict, i: int, total: int, vertical: bool, job_work_dir: Path
+) -> Path:
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, MAX_CLIP_ATTEMPTS + 1):
+        suffix = f" (retry {attempt - 1}/{MAX_CLIP_ATTEMPTS - 1})" if attempt > 1 else ""
+        try:
+            _set(job_id, message=f"Downloading clip {i}/{total}{suffix}")
+            src = youtube.download_section(url, w["start"], w["end"], job_work_dir)
+            _set(job_id, message=f"Rendering clip {i}/{total}{suffix}")
+            return clipper.finalize_clip(src, job_id, i, vertical)
+        except RuntimeError as exc:
+            last_exc = exc
+            logger.warning("Clip %s/%s attempt %s/%s failed: %s", i, total, attempt, MAX_CLIP_ATTEMPTS, exc)
+    raise last_exc
 
 
 def _manual_window(payload: dict, info: dict, duration: float) -> list[dict]:
