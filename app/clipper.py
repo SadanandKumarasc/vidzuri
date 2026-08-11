@@ -7,6 +7,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
+from typing import Optional
 
 from app.config import RETENTION_HOURS, STORAGE_DIR
 
@@ -65,15 +66,25 @@ def _validate_source(src: Path) -> None:
         )
 
 
-def finalize_clip(src: Path, job_id: str, index: int, vertical: bool) -> Path:
+def finalize_clip(
+    src: Path, job_id: str, index: int, vertical: bool, trim: Optional[tuple[float, float]] = None
+) -> Path:
     """Re-encode the downloaded section into the final delivered clip
     (optionally reformatted to 9:16), and write it into storage.
+
+    trim=(start, duration), when given, tells ffmpeg to cut the window out
+    of src itself -- used when src is the full source video rather than an
+    already section-downloaded fragment (see youtube.download_section's
+    use_ranges=False path).
     """
     _validate_source(src)
 
     out_path = STORAGE_DIR / f"{job_id}-{index}-{uuid.uuid4().hex[:6]}.mp4"
 
     cmd = ["ffmpeg", "-y", "-i", str(src)]
+    if trim is not None:
+        start, duration = trim
+        cmd += ["-ss", str(start), "-t", str(duration)]
     if vertical:
         cmd += ["-vf", VERTICAL_FILTER]
     cmd += [

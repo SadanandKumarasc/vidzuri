@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from app import clipper, highlights, transcribe, youtube
-from app.config import MAX_CLIP_SECONDS, MIN_CLIP_SECONDS, WORK_DIR, YTDLP_COOKIES_FILE
+from app.config import MAX_CLIP_SECONDS, MIN_CLIP_SECONDS, WORK_DIR
 
 logger = logging.getLogger("jobs")
 
@@ -86,22 +86,23 @@ def _download_and_render(
         suffix = f" (retry {attempt - 1}/{MAX_CLIP_ATTEMPTS - 1})" if attempt > 1 else ""
         # force_keyframes_at_cuts gives a frame-exact cut but makes yt-dlp
         # re-encode the fragment locally, which has been observed to yield
-        # an undecodable video track for some proxied downloads even though
-        # the file looks structurally valid.
-        force_keyframes = attempt < MAX_CLIP_ATTEMPTS
-        # The undecodable-track failure persisted across every client/
-        # format/cookie combination as long as the proxy was in the loop --
-        # always on the same byte-range-fetched stream -- so the last
-        # attempt drops the proxy entirely and relies on cookie auth alone
-        # to get past YouTube, if cookies are configured.
-        use_proxy = not (attempt == MAX_CLIP_ATTEMPTS and YTDLP_COOKIES_FILE)
+        # an undecodable video track for some downloads even though the
+        # file looks structurally valid.
+        force_keyframes = attempt == 1
+        # yt-dlp's byte-range section download (download_ranges) has been
+        # traced as the actual source of that undecodable-track failure for
+        # certain videos -- confirmed by it persisting identically with and
+        # without a proxy in the loop. The last attempt sidesteps the
+        # mechanism entirely: download the whole video and trim locally.
+        use_ranges = attempt < MAX_CLIP_ATTEMPTS
         try:
             _set(job_id, message=f"Downloading clip {i}/{total}{suffix}")
             src = youtube.download_section(
-                url, w["start"], w["end"], job_work_dir, force_keyframes=force_keyframes, use_proxy=use_proxy
+                url, w["start"], w["end"], job_work_dir, force_keyframes=force_keyframes, use_ranges=use_ranges
             )
             _set(job_id, message=f"Rendering clip {i}/{total}{suffix}")
-            return clipper.finalize_clip(src, job_id, i, vertical)
+            trim = None if use_ranges else (w["start"], w["end"] - w["start"])
+            return clipper.finalize_clip(src, job_id, i, vertical, trim=trim)
         except Exception as exc:  # noqa: BLE001 -- any download/render failure is retryable
             last_exc = exc
             logger.warning("Clip %s/%s attempt %s/%s failed: %s", i, total, attempt, MAX_CLIP_ATTEMPTS, exc)

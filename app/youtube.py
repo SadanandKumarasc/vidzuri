@@ -201,26 +201,34 @@ def parse_timestamp(value: str | float) -> float:
 
 
 def download_section(
-    url: str, start: float, end: float, out_dir: Path, force_keyframes: bool = True, use_proxy: bool = True
+    url: str,
+    start: float,
+    end: float,
+    out_dir: Path,
+    force_keyframes: bool = True,
+    use_proxy: bool = True,
+    use_ranges: bool = True,
 ) -> Path:
-    """Download only [start, end] seconds of the video, re-encoded on the cut
-    boundaries. Returns the path to the downloaded file.
+    """Download the [start, end] section of the video (or, with
+    use_ranges=False, the whole thing) and return the path to the file.
 
     force_keyframes_at_cuts makes yt-dlp re-encode the downloaded fragment
     locally to land the cut on an exact timestamp. That local re-encode has
-    been observed to occasionally produce an undecodable video track when
-    the source download came in over a proxy -- ffprobe still reports valid
-    duration/packet-count metadata, but ffmpeg later decodes zero frames.
-    Callers that hit this can retry with force_keyframes=False, which skips
-    that internal re-encode (a plain stream copy of the keyframe-bound
-    range) at the cost of the clip possibly starting a couple seconds early.
+    been observed to occasionally produce an undecodable video track --
+    ffprobe still reports valid duration/packet-count metadata, but ffmpeg
+    later decodes zero frames.
 
-    use_proxy=False skips the proxy entirely. The undecodable-track failure
-    persisted across every client/format/cookie combination tried, always
-    on the same byte-range-fetched progressive stream -- pointing at the
-    proxy mangling that specific range request rather than anything
-    upstream. With cookies now providing real authentication, a direct
-    connection may no longer need the proxy to get past YouTube at all.
+    use_proxy=False skips the proxy entirely.
+
+    use_ranges=False skips download_ranges/force_keyframes_at_cuts and just
+    downloads the whole video via a plain (non-sectioned) request. The
+    undecodable-track failure was traced to yt-dlp's byte-range section
+    download itself for certain videos -- it persisted identically with and
+    without the proxy, across every client/format/cookie combination, as
+    long as download_ranges was in play. A full download sidesteps that
+    mechanism entirely; the caller is then responsible for trimming
+    [start, end] out of the result themselves (see clipper.finalize_clip's
+    trim= param). Kept as a last resort since it fetches more than needed.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"src-{uuid.uuid4().hex[:8]}"
@@ -242,13 +250,14 @@ def download_section(
             # re-encodes with libx264/aac regardless of source container, so
             # yt-dlp is left to pick whatever container (mkv/webm/mp4) fits.
             "format": "bv*[height<=1080]+ba/b[height<=1080]/best",
-            "download_ranges": download_range_func(None, [(start, end)]),
-            "force_keyframes_at_cuts": force_keyframes,
             "outtmpl": outtmpl,
             "extractor_args": extractor_args,
             **(_proxy_opts() if use_proxy else {}),
             **_cookie_opts(),
         }
+        if use_ranges:
+            opts["download_ranges"] = download_range_func(None, [(start, end)])
+            opts["force_keyframes_at_cuts"] = force_keyframes
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
 
