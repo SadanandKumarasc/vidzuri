@@ -94,11 +94,21 @@ def _download_and_render(
         # certain videos -- confirmed by it persisting identically with and
         # without a proxy in the loop. The last attempt sidesteps the
         # mechanism entirely: download the whole video and trim locally.
+        # That's a much bigger transfer than a 15s range fetch, and the
+        # proxy tunnel has been observed timing out on it (502 Bad Gateway)
+        # -- cookies now provide real auth, so skip the proxy for it too.
         use_ranges = attempt < MAX_CLIP_ATTEMPTS
+        use_proxy = use_ranges
         try:
             _set(job_id, message=f"Downloading clip {i}/{total}{suffix}")
             src = youtube.download_section(
-                url, w["start"], w["end"], job_work_dir, force_keyframes=force_keyframes, use_ranges=use_ranges
+                url,
+                w["start"],
+                w["end"],
+                job_work_dir,
+                force_keyframes=force_keyframes,
+                use_ranges=use_ranges,
+                use_proxy=use_proxy,
             )
             _set(job_id, message=f"Rendering clip {i}/{total}{suffix}")
             trim = None if use_ranges else (w["start"], w["end"] - w["start"])
