@@ -21,6 +21,11 @@ YOUTUBE_URL_RE = re.compile(
     r"(?:youtube\.com/(?:watch\?v=|shorts/|embed/)|youtu\.be/)([\w-]{11})"
 )
 
+# Cloud-host IPs get YouTube's "Sign in to confirm you're not a bot" wall on
+# the default web client. The Android client uses a different endpoint that
+# isn't subject to the same check, so it works from datacenter IPs.
+_EXTRACTOR_ARGS = {"youtube": {"player_client": ["android", "web"]}}
+
 
 class InvalidYouTubeURL(ValueError):
     pass
@@ -35,7 +40,12 @@ def extract_video_id(url: str) -> str:
 
 def get_video_info(url: str) -> dict:
     """Metadata only -- no download."""
-    opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extractor_args": _EXTRACTOR_ARGS,
+    }
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return {
@@ -63,6 +73,7 @@ def get_captions(url: str) -> Optional[list[dict]]:
         "subtitleslangs": ["en", "en-US", "en-orig"],
         "subtitlesformat": "vtt",
         "outtmpl": outtmpl,
+        "extractor_args": _EXTRACTOR_ARGS,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -125,6 +136,7 @@ def download_section(url: str, start: float, end: float, out_dir: Path) -> Path:
         "force_keyframes_at_cuts": True,
         "outtmpl": outtmpl,
         "merge_output_format": "mp4",
+        "extractor_args": _EXTRACTOR_ARGS,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
@@ -155,6 +167,7 @@ def download_audio(url: str, out_dir: Path) -> Path:
                 "preferredquality": "128",
             }
         ],
+        "extractor_args": _EXTRACTOR_ARGS,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
