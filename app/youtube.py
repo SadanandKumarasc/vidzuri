@@ -213,13 +213,16 @@ def download_section(url: str, start: float, end: float, out_dir: Path, force_ke
             # typically webm/vp9), falling through to the single legacy
             # progressive format (itag 18) -- which is a well-known target
             # for YouTube's anti-scraping throttling. Preferring any
-            # adaptive bv*+ba pair (then remuxing to mp4 via
-            # merge_output_format) avoids landing on that throttled stream.
+            # adaptive bv*+ba pair avoids landing on that throttled stream.
+            # No merge_output_format: video/audio codecs from an arbitrary
+            # bv*+ba pair aren't always mp4-compatible for a stream-copy
+            # remux (yt-dlp would exit non-zero forcing one). finalize_clip
+            # re-encodes with libx264/aac regardless of source container, so
+            # yt-dlp is left to pick whatever container (mkv/webm/mp4) fits.
             "format": "bv*[height<=1080]+ba/b[height<=1080]/best",
             "download_ranges": download_range_func(None, [(start, end)]),
             "force_keyframes_at_cuts": force_keyframes,
             "outtmpl": outtmpl,
-            "merge_output_format": "mp4",
             "extractor_args": extractor_args,
             **_proxy_opts(),
             **_cookie_opts(),

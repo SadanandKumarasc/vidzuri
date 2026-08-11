@@ -98,10 +98,12 @@ def _download_and_render(
             )
             _set(job_id, message=f"Rendering clip {i}/{total}{suffix}")
             return clipper.finalize_clip(src, job_id, i, vertical)
-        except RuntimeError as exc:
+        except Exception as exc:  # noqa: BLE001 -- any download/render failure is retryable
             last_exc = exc
             logger.warning("Clip %s/%s attempt %s/%s failed: %s", i, total, attempt, MAX_CLIP_ATTEMPTS, exc)
-    raise last_exc
+    raise RuntimeError(
+        "Couldn't generate this clip after a few tries. Please try again -- if it keeps happening, try a different timestamp."
+    ) from last_exc
 
 
 def _manual_window(payload: dict, info: dict, duration: float) -> list[dict]:
