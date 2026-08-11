@@ -208,7 +208,14 @@ def download_section(url: str, start: float, end: float, out_dir: Path, force_ke
         opts = {
             "quiet": True,
             "no_warnings": True,
-            "format": "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/best",
+            # Requiring ext=mp4 on the video-only stream made this almost
+            # always miss on android/ios clients (their adaptive streams are
+            # typically webm/vp9), falling through to the single legacy
+            # progressive format (itag 18) -- which is a well-known target
+            # for YouTube's anti-scraping throttling. Preferring any
+            # adaptive bv*+ba pair (then remuxing to mp4 via
+            # merge_output_format) avoids landing on that throttled stream.
+            "format": "bv*[height<=1080]+ba/b[height<=1080]/best",
             "download_ranges": download_range_func(None, [(start, end)]),
             "force_keyframes_at_cuts": force_keyframes,
             "outtmpl": outtmpl,
