@@ -200,7 +200,9 @@ def parse_timestamp(value: str | float) -> float:
     return h * 3600 + m * 60 + s
 
 
-def download_section(url: str, start: float, end: float, out_dir: Path, force_keyframes: bool = True) -> Path:
+def download_section(
+    url: str, start: float, end: float, out_dir: Path, force_keyframes: bool = True, use_proxy: bool = True
+) -> Path:
     """Download only [start, end] seconds of the video, re-encoded on the cut
     boundaries. Returns the path to the downloaded file.
 
@@ -212,6 +214,13 @@ def download_section(url: str, start: float, end: float, out_dir: Path, force_ke
     Callers that hit this can retry with force_keyframes=False, which skips
     that internal re-encode (a plain stream copy of the keyframe-bound
     range) at the cost of the clip possibly starting a couple seconds early.
+
+    use_proxy=False skips the proxy entirely. The undecodable-track failure
+    persisted across every client/format/cookie combination tried, always
+    on the same byte-range-fetched progressive stream -- pointing at the
+    proxy mangling that specific range request rather than anything
+    upstream. With cookies now providing real authentication, a direct
+    connection may no longer need the proxy to get past YouTube at all.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"src-{uuid.uuid4().hex[:8]}"
@@ -237,7 +246,7 @@ def download_section(url: str, start: float, end: float, out_dir: Path, force_ke
             "force_keyframes_at_cuts": force_keyframes,
             "outtmpl": outtmpl,
             "extractor_args": extractor_args,
-            **_proxy_opts(),
+            **(_proxy_opts() if use_proxy else {}),
             **_cookie_opts(),
         }
         with yt_dlp.YoutubeDL(opts) as ydl:

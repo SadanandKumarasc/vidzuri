@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from app import clipper, highlights, transcribe, youtube
-from app.config import MAX_CLIP_SECONDS, MIN_CLIP_SECONDS, WORK_DIR
+from app.config import MAX_CLIP_SECONDS, MIN_CLIP_SECONDS, WORK_DIR, YTDLP_COOKIES_FILE
 
 logger = logging.getLogger("jobs")
 
@@ -87,14 +87,18 @@ def _download_and_render(
         # force_keyframes_at_cuts gives a frame-exact cut but makes yt-dlp
         # re-encode the fragment locally, which has been observed to yield
         # an undecodable video track for some proxied downloads even though
-        # the file looks structurally valid. The last attempt drops it in
-        # favor of a plain stream-copy download (imprecise start, but far
-        # less likely to hit that failure mode) rather than giving up.
+        # the file looks structurally valid.
         force_keyframes = attempt < MAX_CLIP_ATTEMPTS
+        # The undecodable-track failure persisted across every client/
+        # format/cookie combination as long as the proxy was in the loop --
+        # always on the same byte-range-fetched stream -- so the last
+        # attempt drops the proxy entirely and relies on cookie auth alone
+        # to get past YouTube, if cookies are configured.
+        use_proxy = not (attempt == MAX_CLIP_ATTEMPTS and YTDLP_COOKIES_FILE)
         try:
             _set(job_id, message=f"Downloading clip {i}/{total}{suffix}")
             src = youtube.download_section(
-                url, w["start"], w["end"], job_work_dir, force_keyframes=force_keyframes
+                url, w["start"], w["end"], job_work_dir, force_keyframes=force_keyframes, use_proxy=use_proxy
             )
             _set(job_id, message=f"Rendering clip {i}/{total}{suffix}")
             return clipper.finalize_clip(src, job_id, i, vertical)
