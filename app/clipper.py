@@ -23,21 +23,43 @@ MIN_SOURCE_DURATION = 1.0  # seconds -- below this, the download is treated as c
 def _validate_source(src: Path) -> None:
     """Catch a truncated/corrupt download early with a clear error, instead
     of letting ffmpeg fail deep into an encode with an opaque log dump.
+
+    Duration alone isn't enough -- a truncated download can still carry
+    correct-looking container/duration metadata while the actual video
+    payload is empty. Confirm the video stream actually has packets too.
     """
-    result = subprocess.run(
+    duration_result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(src)],
         capture_output=True,
         text=True,
     )
     duration = None
-    if result.returncode == 0:
+    if duration_result.returncode == 0:
         try:
-            duration = float(result.stdout.strip())
+            duration = float(duration_result.stdout.strip())
         except ValueError:
             duration = None
 
-    if duration is None or duration < MIN_SOURCE_DURATION:
-        logger.error("Source validation failed for %s: ffprobe duration=%s, stderr=%s", src, duration, result.stderr[-1000:])
+    packets_result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets",
+            "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(src),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    packet_count = None
+    if packets_result.returncode == 0:
+        try:
+            packet_count = int(packets_result.stdout.strip())
+        except ValueError:
+            packet_count = None
+
+    if duration is None or duration < MIN_SOURCE_DURATION or not packet_count:
+        logger.error(
+            "Source validation failed for %s: duration=%s, video_packets=%s, dur_stderr=%s, pkt_stderr=%s",
+            src, duration, packet_count, duration_result.stderr[-500:], packets_result.stderr[-500:],
+        )
         raise RuntimeError(
             "The video download came back incomplete (this happens occasionally with YouTube). Please try again."
         )
