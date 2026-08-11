@@ -16,9 +16,16 @@ import webvtt
 import yt_dlp
 from yt_dlp.utils import download_range_func
 
-from app.config import WORK_DIR
+from app.config import WORK_DIR, YTDLP_PROXY
 
 logger = logging.getLogger("youtube")
+
+
+def _proxy_opts() -> dict:
+    """Merge into any yt-dlp opts dict. Empty when YTDLP_PROXY is unset, so
+    requests go out directly with no behavior change.
+    """
+    return {"proxy": YTDLP_PROXY} if YTDLP_PROXY else {}
 
 YOUTUBE_URL_RE = re.compile(
     r"(?:youtube\.com/(?:watch\?v=|shorts/|embed/)|youtu\.be/)([\w-]{11})"
@@ -81,6 +88,7 @@ def get_video_info(url: str) -> dict:
             "no_warnings": True,
             "skip_download": True,
             "extractor_args": extractor_args,
+            **_proxy_opts(),
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=False)
@@ -113,6 +121,7 @@ def get_captions(url: str) -> Optional[list[dict]]:
             "subtitlesformat": "vtt",
             "outtmpl": outtmpl,
             "extractor_args": extractor_args,
+            **_proxy_opts(),
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
@@ -179,6 +188,7 @@ def download_section(url: str, start: float, end: float, out_dir: Path) -> Path:
             "outtmpl": outtmpl,
             "merge_output_format": "mp4",
             "extractor_args": extractor_args,
+            **_proxy_opts(),
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
@@ -213,6 +223,7 @@ def download_audio(url: str, out_dir: Path) -> Path:
                 }
             ],
             "extractor_args": extractor_args,
+            **_proxy_opts(),
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
