@@ -1,0 +1,110 @@
+"""In-memory job store + background orchestration for both clip modes."""
+
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Optional
+
+from app import clipper, highlights, transcribe, youtube
+from app.config import MAX_CLIP_SECONDS, MIN_CLIP_SECONDS, WORK_DIR
+
+_executor = ThreadPoolExecutor(max_workers=2)
+_jobs: dict[str, dict] = {}
+
+
+def create_job(payload: dict) -> str:
+    job_id = uuid.uuid4().hex[:12]
+    _jobs[job_id] = {
+        "id": job_id,
+        "status": "queued",
+        "message": "Queued",
+        "error": None,
+        "clips": [],
+        "created_at": time.time(),
+    }
+    _executor.submit(_run_job, job_id, payload)
+    return job_id
+
+
+def get_job(job_id: str) -> Optional[dict]:
+    return _jobs.get(job_id)
+
+
+def _set(job_id: str, **kwargs):
+    _jobs[job_id].update(kwargs)
+
+
+def _run_job(job_id: str, payload: dict) -> None:
+    job_work_dir = WORK_DIR / job_id
+    try:
+        url = payload["url"]
+        vertical = bool(payload.get("vertical", False))
+
+        _set(job_id, status="processing", message="Fetching video info")
+        info = youtube.get_video_info(url)
+        duration = info["duration"] or 0
+
+        if payload["mode"] == "manual":
+            windows = _manual_window(payload, info, duration)
+        else:
+            windows = _auto_windows(job_id, url, duration, job_work_dir)
+
+        clips = []
+        for i, w in enumerate(windows, start=1):
+            _set(job_id, message=f"Downloading clip {i}/{len(windows)}")
+            src = youtube.download_section(url, w["start"], w["end"], job_work_dir)
+            _set(job_id, message=f"Rendering clip {i}/{len(windows)}")
+            out_path = clipper.finalize_clip(src, job_id, i, vertical)
+            clips.append(
+                {
+                    "title": w.get("title", info["title"]),
+                    "reason": w.get("reason", ""),
+                    "start": w["start"],
+                    "end": w["end"],
+                    "filename": out_path.name,
+                }
+            )
+
+        _set(job_id, status="done", message="Done", clips=clips)
+    except Exception as exc:  # noqa: BLE001 -- surfaced to the UI, not swallowed
+        _set(job_id, status="error", message=str(exc), error=str(exc))
+    finally:
+        _cleanup_dir(job_work_dir)
+
+
+def _manual_window(payload: dict, info: dict, duration: float) -> list[dict]:
+    start = youtube.parse_timestamp(payload["start"])
+    length = float(payload.get("duration", MAX_CLIP_SECONDS))
+    length = max(MIN_CLIP_SECONDS, min(MAX_CLIP_SECONDS, length))
+    end = start + length
+    if duration:
+        if start >= duration:
+            raise ValueError("Start time is past the end of the video")
+        end = min(end, duration)
+    return [{"start": start, "end": end, "title": info["title"]}]
+
+
+def _auto_windows(job_id: str, url: str, duration: float, job_work_dir: Path) -> list[dict]:
+    _set(job_id, message="Fetching captions")
+    transcript = youtube.get_captions(url)
+
+    if not transcript:
+        _set(job_id, message="No captions available, transcribing audio (this can take a minute)")
+        audio_path = youtube.download_audio(url, job_work_dir)
+        transcript = transcribe.transcribe_audio(audio_path)
+        audio_path.unlink(missing_ok=True)
+
+    if not transcript:
+        raise RuntimeError("Could not obtain a transcript for this video")
+
+    _set(job_id, message="Picking highlight moments")
+    return highlights.pick_highlights(transcript, duration)
+
+
+def _cleanup_dir(d: Path) -> None:
+    if not d.exists():
+        return
+    for f in d.glob("*"):
+        f.unlink(missing_ok=True)
+    d.rmdir()

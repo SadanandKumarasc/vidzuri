@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vidzuri — YouTube to 10-15s clips</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/style.css?v=3" />
+</head>
+<body>
+  <main class="page">
+    <header class="page-header">
+      <img class="brand-icon" src="/static/favicon.svg" alt="Vidzuri" width="72" height="72" />
+      <h1>Vidzuri</h1>
+      <p class="subtitle">Turn a long YouTube video into a {{ min_seconds }}-{{ max_seconds }}s clip.</p>
+    </header>
+
+    <form id="clip-form" class="card">
+      <label class="field">
+        <span>YouTube URL</span>
+        <input type="text" id="url" name="url" placeholder="https://www.youtube.com/watch?v=..." required />
+      </label>
+
+      <div id="manual-fields" class="mode-fields">
+        <label class="field">
+          <span>Start time <small>(mm:ss or seconds)</small></span>
+          <input type="text" id="start" name="start" placeholder="1:23" />
+        </label>
+        <label class="field">
+          <span>Duration: <output id="duration-out">15</output>s</span>
+          <input type="range" id="duration" name="duration" min="{{ min_seconds }}" max="{{ max_seconds }}" value="15" />
+        </label>
+      </div>
+
+      <label class="field checkbox">
+        <input type="checkbox" id="vertical" name="vertical" />
+        <span>Reformat to vertical 9:16 (Shorts / Reels / TikTok)</span>
+      </label>
+
+      <button type="submit" id="submit-btn" class="primary-btn">Generate clip</button>
+      <p class="disclaimer">Only clip videos you have the rights to use or that fall under fair use.</p>
+    </form>
+
+    <section id="status" class="card hidden">
+      <div class="spinner"></div>
+      <p id="status-message">Working…</p>
+    </section>
+
+    <section id="results" class="results hidden"></section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
