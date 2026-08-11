@@ -16,7 +16,7 @@ import webvtt
 import yt_dlp
 from yt_dlp.utils import download_range_func
 
-from app.config import WORK_DIR, YTDLP_PROXY
+from app.config import WORK_DIR, YTDLP_COOKIES_FILE, YTDLP_PROXY
 
 logger = logging.getLogger("youtube")
 
@@ -26,6 +26,14 @@ def _proxy_opts() -> dict:
     requests go out directly with no behavior change.
     """
     return {"proxy": YTDLP_PROXY} if YTDLP_PROXY else {}
+
+
+def _cookie_opts() -> dict:
+    """Merge into any yt-dlp opts dict. A trusted, logged-in session is much
+    less likely to get served a throttled/degraded stream than an anonymous
+    proxy request. Empty when YTDLP_COOKIES_FILE is unset.
+    """
+    return {"cookiefile": YTDLP_COOKIES_FILE} if YTDLP_COOKIES_FILE else {}
 
 YOUTUBE_URL_RE = re.compile(
     r"(?:youtube\.com/(?:watch\?v=|shorts/|embed/)|youtu\.be/)([\w-]{11})"
@@ -89,6 +97,7 @@ def get_video_info(url: str) -> dict:
             "skip_download": True,
             "extractor_args": extractor_args,
             **_proxy_opts(),
+            **_cookie_opts(),
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=False)
@@ -122,6 +131,7 @@ def get_captions(url: str) -> Optional[list[dict]]:
             "outtmpl": outtmpl,
             "extractor_args": extractor_args,
             **_proxy_opts(),
+            **_cookie_opts(),
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
@@ -198,6 +208,7 @@ def download_section(url: str, start: float, end: float, out_dir: Path, force_ke
             "merge_output_format": "mp4",
             "extractor_args": extractor_args,
             **_proxy_opts(),
+            **_cookie_opts(),
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
@@ -233,6 +244,7 @@ def download_audio(url: str, out_dir: Path) -> Path:
             ],
             "extractor_args": extractor_args,
             **_proxy_opts(),
+            **_cookie_opts(),
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])

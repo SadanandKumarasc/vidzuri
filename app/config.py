@@ -20,6 +20,18 @@ RETENTION_HOURS = float(os.environ.get("CLIP_RETENTION_HOURS", "48"))
 # Format: http://user:pass@host:port -- leave unset to make direct requests.
 YTDLP_PROXY = os.environ.get("YTDLP_PROXY", "")
 
+# Optional: authenticate yt-dlp as a logged-in YouTube session. A trusted
+# session is far less likely to get served throttled/degraded video streams
+# than an anonymous proxy request. Paste the full contents of a Netscape-
+# format cookies.txt file (exported from a browser logged into YouTube) --
+# it's written to disk once at startup and passed to yt-dlp as a cookiefile.
+YTDLP_COOKIES_CONTENT = os.environ.get("YTDLP_COOKIES_CONTENT", "")
+YTDLP_COOKIES_FILE = ""
+if YTDLP_COOKIES_CONTENT:
+    _cookies_path = STORAGE_DIR / "cookies.txt"
+    _cookies_path.write_text(YTDLP_COOKIES_CONTENT, encoding="utf-8")
+    YTDLP_COOKIES_FILE = str(_cookies_path)
+
 MIN_CLIP_SECONDS = 10
 MAX_CLIP_SECONDS = 15
 AUTO_MODE_MAX_CLIPS = 4
