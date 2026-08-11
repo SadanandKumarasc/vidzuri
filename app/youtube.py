@@ -6,10 +6,11 @@ fetched and the cut lands on an exact timestamp (re-encoded via ffmpeg
 internally by yt-dlp, not just a keyframe-snapped copy).
 """
 
+import logging
 import re
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import webvtt
 import yt_dlp
@@ -17,14 +18,24 @@ from yt_dlp.utils import download_range_func
 
 from app.config import WORK_DIR
 
+logger = logging.getLogger("youtube")
+
 YOUTUBE_URL_RE = re.compile(
     r"(?:youtube\.com/(?:watch\?v=|shorts/|embed/)|youtu\.be/)([\w-]{11})"
 )
 
-# Cloud-host IPs get YouTube's "Sign in to confirm you're not a bot" wall on
-# the default web client. The Android client uses a different endpoint that
-# isn't subject to the same check, so it works from datacenter IPs.
-_EXTRACTOR_ARGS = {"youtube": {"player_client": ["android", "web"]}}
+# Cloud-host IPs occasionally hit YouTube's "Sign in to confirm you're not a
+# bot" wall -- and it's intermittent per-request, not just per-video. Each
+# player client hits a different backend endpoint with different bot-check
+# enforcement, so cycling through a few on that specific error is the
+# standard mitigation (short of using login cookies or a residential proxy).
+_CLIENT_FALLBACKS = [
+    ["android", "web"],
+    ["ios", "web"],
+    ["tv_embedded", "web"],
+]
+
+_BOT_CHECK_MARKERS = ("sign in to confirm", "not a bot")
 
 
 class InvalidYouTubeURL(ValueError):
@@ -38,16 +49,43 @@ def extract_video_id(url: str) -> str:
     return match.group(1)
 
 
+def _is_bot_check_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _BOT_CHECK_MARKERS)
+
+
+def _run_with_client_fallback(attempt: Callable[[dict], object]) -> object:
+    """Call attempt(extractor_args) across a few player-client combos,
+    retrying only on YouTube's bot-check wall.
+    """
+    last_exc: Optional[Exception] = None
+    for clients in _CLIENT_FALLBACKS:
+        try:
+            return attempt({"youtube": {"player_client": clients}})
+        except yt_dlp.utils.DownloadError as e:
+            last_exc = e
+            if not _is_bot_check_error(e):
+                raise
+            logger.warning("yt-dlp bot-check hit with player_client=%s, trying next client", clients)
+    raise RuntimeError(
+        "YouTube is temporarily blocking this server's requests for this video. Please try again in a few minutes."
+    ) from last_exc
+
+
 def get_video_info(url: str) -> dict:
     """Metadata only -- no download."""
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "extractor_args": _EXTRACTOR_ARGS,
-    }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+
+    def _attempt(extractor_args: dict) -> dict:
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extractor_args": extractor_args,
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=False)
+
+    info = _run_with_client_fallback(_attempt)
     return {
         "id": info["id"],
         "title": info.get("title", "Untitled"),
@@ -64,20 +102,23 @@ def get_captions(url: str) -> Optional[list[dict]]:
     job_dir.mkdir(parents=True, exist_ok=True)
     outtmpl = str(job_dir / "%(id)s")
 
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "writesubtitles": True,
-        "writeautomaticsub": True,
-        "subtitleslangs": ["en", "en-US", "en-orig"],
-        "subtitlesformat": "vtt",
-        "outtmpl": outtmpl,
-        "extractor_args": _EXTRACTOR_ARGS,
-    }
-    try:
+    def _attempt(extractor_args: dict) -> None:
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            "subtitleslangs": ["en", "en-US", "en-orig"],
+            "subtitlesformat": "vtt",
+            "outtmpl": outtmpl,
+            "extractor_args": extractor_args,
+        }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
+
+    try:
+        _run_with_client_fallback(_attempt)
 
         vtt_files = sorted(job_dir.glob("*.vtt"))
         if not vtt_files:
@@ -128,18 +169,21 @@ def download_section(url: str, start: float, end: float, out_dir: Path) -> Path:
     stem = f"src-{uuid.uuid4().hex[:8]}"
     outtmpl = str(out_dir / f"{stem}.%(ext)s")
 
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "format": "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/best",
-        "download_ranges": download_range_func(None, [(start, end)]),
-        "force_keyframes_at_cuts": True,
-        "outtmpl": outtmpl,
-        "merge_output_format": "mp4",
-        "extractor_args": _EXTRACTOR_ARGS,
-    }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
+    def _attempt(extractor_args: dict) -> None:
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "format": "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/best",
+            "download_ranges": download_range_func(None, [(start, end)]),
+            "force_keyframes_at_cuts": True,
+            "outtmpl": outtmpl,
+            "merge_output_format": "mp4",
+            "extractor_args": extractor_args,
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+
+    _run_with_client_fallback(_attempt)
 
     matches = list(out_dir.glob(f"{stem}.*"))
     if not matches:
@@ -155,22 +199,25 @@ def download_audio(url: str, out_dir: Path) -> Path:
     stem = f"audio-{uuid.uuid4().hex[:8]}"
     outtmpl = str(out_dir / f"{stem}.%(ext)s")
 
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "format": "ba/b",
-        "outtmpl": outtmpl,
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "128",
-            }
-        ],
-        "extractor_args": _EXTRACTOR_ARGS,
-    }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
+    def _attempt(extractor_args: dict) -> None:
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "format": "ba/b",
+            "outtmpl": outtmpl,
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "128",
+                }
+            ],
+            "extractor_args": extractor_args,
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+
+    _run_with_client_fallback(_attempt)
 
     matches = list(out_dir.glob(f"{stem}.*"))
     if not matches:
