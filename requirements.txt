@@ -1,6 +1,7 @@
+# cache-bust 2026-08-12: force a fresh yt-dlp resolve (YouTube compat patches ship almost daily)
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
-yt-dlp>=2026.8.1
+yt-dlp>=2026.7.4
 faster-whisper==1.2.1
 anthropic>=0.121.0
 jinja2==3.1.4
