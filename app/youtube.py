@@ -170,9 +170,18 @@ def parse_timestamp(value: str | float) -> float:
     return h * 3600 + m * 60 + s
 
 
-def download_section(url: str, start: float, end: float, out_dir: Path) -> Path:
+def download_section(url: str, start: float, end: float, out_dir: Path, force_keyframes: bool = True) -> Path:
     """Download only [start, end] seconds of the video, re-encoded on the cut
     boundaries. Returns the path to the downloaded file.
+
+    force_keyframes_at_cuts makes yt-dlp re-encode the downloaded fragment
+    locally to land the cut on an exact timestamp. That local re-encode has
+    been observed to occasionally produce an undecodable video track when
+    the source download came in over a proxy -- ffprobe still reports valid
+    duration/packet-count metadata, but ffmpeg later decodes zero frames.
+    Callers that hit this can retry with force_keyframes=False, which skips
+    that internal re-encode (a plain stream copy of the keyframe-bound
+    range) at the cost of the clip possibly starting a couple seconds early.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"src-{uuid.uuid4().hex[:8]}"
@@ -184,7 +193,7 @@ def download_section(url: str, start: float, end: float, out_dir: Path) -> Path:
             "no_warnings": True,
             "format": "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/best",
             "download_ranges": download_range_func(None, [(start, end)]),
-            "force_keyframes_at_cuts": True,
+            "force_keyframes_at_cuts": force_keyframes,
             "outtmpl": outtmpl,
             "merge_output_format": "mp4",
             "extractor_args": extractor_args,

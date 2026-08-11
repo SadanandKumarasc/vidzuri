@@ -84,9 +84,18 @@ def _download_and_render(
     last_exc: Optional[Exception] = None
     for attempt in range(1, MAX_CLIP_ATTEMPTS + 1):
         suffix = f" (retry {attempt - 1}/{MAX_CLIP_ATTEMPTS - 1})" if attempt > 1 else ""
+        # force_keyframes_at_cuts gives a frame-exact cut but makes yt-dlp
+        # re-encode the fragment locally, which has been observed to yield
+        # an undecodable video track for some proxied downloads even though
+        # the file looks structurally valid. The last attempt drops it in
+        # favor of a plain stream-copy download (imprecise start, but far
+        # less likely to hit that failure mode) rather than giving up.
+        force_keyframes = attempt < MAX_CLIP_ATTEMPTS
         try:
             _set(job_id, message=f"Downloading clip {i}/{total}{suffix}")
-            src = youtube.download_section(url, w["start"], w["end"], job_work_dir)
+            src = youtube.download_section(
+                url, w["start"], w["end"], job_work_dir, force_keyframes=force_keyframes
+            )
             _set(job_id, message=f"Rendering clip {i}/{total}{suffix}")
             return clipper.finalize_clip(src, job_id, i, vertical)
         except RuntimeError as exc:
