@@ -52,6 +52,12 @@ _CLIENT_FALLBACKS = [
 
 _BOT_CHECK_MARKERS = ("sign in to confirm", "not a bot")
 
+# Some player clients (especially combined with cookie auth) come back with
+# an empty/restricted format list for a given video rather than an outright
+# bot-check wall. Cycling clients helps here too, since another client often
+# has the format we need.
+_RETRYABLE_MARKERS = _BOT_CHECK_MARKERS + ("requested format is not available",)
+
 
 class InvalidYouTubeURL(ValueError):
     pass
@@ -64,14 +70,15 @@ def extract_video_id(url: str) -> str:
     return match.group(1)
 
 
-def _is_bot_check_error(exc: Exception) -> bool:
+def _is_retryable_error(exc: Exception) -> bool:
     msg = str(exc).lower()
-    return any(marker in msg for marker in _BOT_CHECK_MARKERS)
+    return any(marker in msg for marker in _RETRYABLE_MARKERS)
 
 
 def _run_with_client_fallback(attempt: Callable[[dict], object]) -> object:
     """Call attempt(extractor_args) across a few player-client combos,
-    retrying only on YouTube's bot-check wall.
+    retrying on YouTube's bot-check wall or a client-specific empty/
+    restricted format list.
     """
     last_exc: Optional[Exception] = None
     for clients in _CLIENT_FALLBACKS:
@@ -79,9 +86,9 @@ def _run_with_client_fallback(attempt: Callable[[dict], object]) -> object:
             return attempt({"youtube": {"player_client": clients}})
         except yt_dlp.utils.DownloadError as e:
             last_exc = e
-            if not _is_bot_check_error(e):
+            if not _is_retryable_error(e):
                 raise
-            logger.warning("yt-dlp bot-check hit with player_client=%s, trying next client", clients)
+            logger.warning("yt-dlp retryable error hit with player_client=%s, trying next client", clients)
     raise RuntimeError(
         "YouTube is temporarily blocking this server's requests for this video. Please try again in a few minutes."
     ) from last_exc
