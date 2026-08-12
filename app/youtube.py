@@ -96,7 +96,11 @@ def _pot_extractor_args() -> dict:
     """
     if not YTDLP_POT_PROVIDER_URL:
         return {}
-    return {"youtubepot-bgutilhttp": {"base_url": YTDLP_POT_PROVIDER_URL}}
+    # extractor_args values must be lists of strings (matching how yt-dlp
+    # parses the --extractor-args CLI flag) -- a bare string here makes the
+    # plugin fail with "Unsupported url scheme: ''" and silently fall back
+    # to its 127.0.0.1 default instead of using this value.
+    return {"youtubepot-bgutilhttp": {"base_url": [YTDLP_POT_PROVIDER_URL]}}
 
 
 def _run_with_client_fallback(attempt: Callable[[dict], object]) -> object:
