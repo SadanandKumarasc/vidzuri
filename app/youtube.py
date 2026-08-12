@@ -16,7 +16,7 @@ import webvtt
 import yt_dlp
 from yt_dlp.utils import download_range_func
 
-from app.config import WORK_DIR, YTDLP_COOKIES_FILE, YTDLP_PROXY
+from app.config import WORK_DIR, YTDLP_COOKIES_FILE, YTDLP_POT_PROVIDER_URL, YTDLP_PROXY
 
 logger = logging.getLogger("youtube")
 
@@ -88,6 +88,17 @@ def _is_retryable_error(exc: Exception) -> bool:
     return any(marker in msg for marker in _RETRYABLE_MARKERS)
 
 
+def _pot_extractor_args() -> dict:
+    """Merge into any extractor_args dict. Tells yt-dlp's bgutil POT-provider
+    plugin where to reach the token-generation server. Empty when
+    YTDLP_POT_PROVIDER_URL is unset (plugin no-ops if it can't reach a
+    provider, so this is safe to always include once configured).
+    """
+    if not YTDLP_POT_PROVIDER_URL:
+        return {}
+    return {"youtubepot-bgutilhttp": {"base_url": YTDLP_POT_PROVIDER_URL}}
+
+
 def _run_with_client_fallback(attempt: Callable[[dict], object]) -> object:
     """Call attempt(extractor_args) across a few player-client combos,
     retrying on YouTube's bot-check wall or a client-specific empty/
@@ -96,7 +107,7 @@ def _run_with_client_fallback(attempt: Callable[[dict], object]) -> object:
     last_exc: Optional[Exception] = None
     for clients in _CLIENT_FALLBACKS:
         try:
-            return attempt({"youtube": {"player_client": clients}})
+            return attempt({"youtube": {"player_client": clients}, **_pot_extractor_args()})
         except yt_dlp.utils.DownloadError as e:
             last_exc = e
             if not _is_retryable_error(e):

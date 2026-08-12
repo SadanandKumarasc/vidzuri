@@ -32,6 +32,14 @@ if YTDLP_COOKIES_CONTENT:
     _cookies_path.write_text(YTDLP_COOKIES_CONTENT, encoding="utf-8")
     YTDLP_COOKIES_FILE = str(_cookies_path)
 
+# Optional: URL of a running bgutil-ytdlp-pot-provider HTTP server (see
+# https://github.com/Brainicism/bgutil-ytdlp-pot-provider). Generates the
+# PO (Proof-of-Origin) tokens YouTube now requires to trust a request as a
+# real browser -- without one, YouTube either blocks non-browser clients
+# outright or silently serves them degraded/corrupted video data, which is
+# the failure this was added to fix. Leave unset to skip PO tokens.
+YTDLP_POT_PROVIDER_URL = os.environ.get("YTDLP_POT_PROVIDER_URL", "")
+
 MIN_CLIP_SECONDS = 10
 MAX_CLIP_SECONDS = 15
 AUTO_MODE_MAX_CLIPS = 4
